@@ -1,0 +1,322 @@
+#!/bin/bash
+# Nodestats 1.302
+# Telegram   : @Nocdem
+# Description: This script generates an HTML page displaying various information about the status of a Cellframe node.
+#              It includes details about version, CPU and memory utilization, network, certificates, and wallet information.
+#              Some checks as well to run a masternode.
+#              This script is intended to be run in a CGI environment.
+# Prerequisites:
+# 1. Node Application - Make sure the Node application is installed and configured on your system.
+#
+# 2. bc
+#
+# Installation Steps:
+#
+# 1. Set Execute Permissions:
+#    chmod +x node_status
+#
+# 2. Update Paths (Optional):
+#    If necessary, update paths in the script to match the location of your `cellframe-node-cli` tool and other dependencies.
+#
+# 3. Configure Web Server:
+#    Configure your web server to execute CGI scripts.
+#
+# 4. Copy the script to
+#    /cgi-bin/ /path/to/cgi-bin/
+#
+# 5. Access the Web Page:
+#    Access the Node Status web page in your browser. The URL will depend on your web server configuration.
+#    http://your-server/cgi-bin/node_status
+#
+# Note:
+# - The script is configured to refresh every 60 seconds by default. You can adjust this interval by modifying the `meta refresh` tag in the script.
+# - Customize the script output to match your specific Node application environment.
+# - Make sure the web server user has the necessary permissions to execute the script and access relevant files.
+
+# Log file path
+LOG_FILE="$HOME/node_error.log"
+
+# Function to log error messages
+log_error() {
+    local message="$1"
+    echo "$(date "+%Y-%m-%d %H:%M:%S") - ERROR: $message" >> "$LOG_FILE"
+}
+
+cat <<EOF
+Content-type: text/html
+
+<html>
+<head>
+<title>Node Status</title>
+<meta http-equiv="refresh" content="60">
+<style>
+#block-list { display: none; }
+</style>
+<script>
+function toggleBlockList() {
+    var blockList = document.getElementById('block-list');
+    blockList.style.display = (blockList.style.display === 'none') ? 'block' : 'none';
+}
+</script>
+</head>
+<body>
+<pre id="output">
+EOF
+
+if ! command -v bc >/dev/null 2>&1; then
+    echo "dependency bc is not installed."
+    log_error "dependency bc is not installed."
+fi
+
+echo -n "Hostname: "; hostname
+
+activetime=$(systemctl status cellframe-node 2>&1)
+if [[ $? -ne 0 ]]; then
+    log_error "Failed to get cellframe-node status: $activetime"
+    echo "Error fetching cellframe-node status."
+else
+    echo "$activetime" | sed 's/^[[:space:]]*//' | grep Active
+fi
+
+latest_version=$(wget -qO- https://pub.cellframe.net/linux/cellframe-node/master/node-version-badge.svg | grep -o '<text x="114.5" y="14">.*</text>' | sed -n 's/.*>\(.*\)<\/text>.*/\1/p' | sed 's/\./-/2')
+if [[ -z "$latest_version" ]]; then
+    log_error "Failed to fetch the latest version."
+fi
+
+current_version=$(/opt/cellframe-node/bin/cellframe-node-cli version | awk '{print $3}')
+echo -n "node version         :"
+if [[ "$current_version" == "$latest_version" ]]; then
+    echo "<span style='background-color: green; color: white; padding: 0.2em 0.5em; border-radius: 3px; margin-left: 10px;'>$current_version</span>"
+else
+    echo "<span style='background-color: red; color: white; padding: 0.2em 0.5em; border-radius: 3px; margin-left: 10px;'>$current_version >> $latest_version</span>"
+fi
+
+ns_latest_version=$(wget -qO- https://raw.githubusercontent.com/nocdem/Cellframe/main/cellframe-community/Nocdem/node_stats | grep -oP '(?<=# Nodestats ).*' | head -n 1)
+if [[ -z "$ns_latest_version" ]]; then
+    log_error "Failed to fetch the latest node_stats version."
+fi
+
+ns_current_version=$(cat /usr/lib/cgi-bin/node_stats | grep -oP '(?<=# Nodestats ).*' | head -n 1)
+echo -n "node_stats version   :"
+if [[ "$ns_current_version" == "$ns_latest_version" ]]; then
+    echo "<span style='background-color: green; color: white; padding: 0.2em 0.5em; border-radius: 3px; margin-left: 10px;'>$ns_current_version</span>"
+else
+    echo "<span style='background-color: red; color: white; padding: 0.2em 0.5em; border-radius: 3px; margin-left: 10px;'>$ns_current_version >> $ns_latest_version</span>"
+fi
+
+mem_stats=$(cat /proc/meminfo)  # Read memory statistics from /proc/meminfo
+
+total_memory=$(echo "$mem_stats" | grep "MemTotal" | awk '{print $2}')  # Extract total memory value
+free_memory=$(echo "$mem_stats" | grep "MemAvailable" | awk '{print $2}')  # Extract available memory value
+
+used_memory=$((total_memory - free_memory))  # Calculate used memory
+memory_utilization=$((used_memory * 100 / total_memory))  # Calculate memory utilization percentage
+
+cpu_utilization=$(/opt/cellframe-node/bin/cellframe-node-cli stats cpu | grep -oP 'Total: \K\d+')  # Extract CPU utilization
+
+if [[ $cpu_utilization -gt 90 ]]; then
+    cpu_color="red"
+    log_error "High cpu usage"
+else
+    cpu_color="green"
+fi
+
+# Check memory utilization and set color
+if [[ $memory_utilization -gt 90 ]]; then
+    memory_color="red"
+    log_error "High memory usage"
+else
+    memory_color="green"
+fi
+
+echo ""
+# Display CPU Utilization with color based on utilization percentage
+echo -n "CPU Utilization      : "
+echo "<span style='background-color: $cpu_color; color: white; padding: 0.2em 0.5em; border-radius: 3px;'> $cpu_utilization</span>"
+
+# Display Memory Utilization with color based on utilization percentage
+echo -n "Memory Utilization   : "
+echo "<span style='background-color: $memory_color; color: white; padding: 0.2em 0.5em; border-radius: 3px;'> $memory_utilization %</span>"
+
+echo ""
+
+# Fetch and process network names
+networks=$(/opt/cellframe-node/bin/cellframe-node-cli net list 2>&1)
+if [[ $? -ne 0 ]]; then
+    log_error "Failed to list networks: $networks"
+    echo "Error fetching network list."
+else
+    networks=$(echo "$networks" | sed '1,2d' | tr ',' '\n')
+fi
+
+certs=$(ls /opt/cellframe-node/var/lib/ca/ | grep -oP '^(?!node-addr-).*dcert' | sed 's/.dcert//g')
+wallets=$(ls /opt/cellframe-node/var/lib/wallet/ | sed 's/.dwallet//g')
+
+while read -ra network; do
+    # Get network information
+    status=$(/opt/cellframe-node/bin/cellframe-node-cli net get status -net "$network" 2>&1)
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to get network status for $network: $status"
+        echo "Error fetching network status for $network."
+        continue
+    fi
+
+    node_address=$(echo "$status" | grep current_addr | awk '{print $2}')
+
+   fee_addr=$(cat /opt/cellframe-node/etc/network/"$network".cfg | grep "fee_addr=" | sed 's/^.........//')
+    cert_name=$(cat /opt/cellframe-node/etc/network/"$network".cfg | grep "blocks-sign-cert=" | sed 's/^.................//')
+    node_status=$(cat /opt/cellframe-node/etc/network/"$network".cfg | grep node-role)
+ node_percent=$(echo "$status" | grep -A 5 "main:" | grep "percent:" | awk '{print $2}')
+
+  current_block=$(/opt/cellframe-node/bin/cellframe-node-cli block list -net "$network" -chain main | grep .main | awk '{print $3}')
+
+states_output=$(echo "$status" | sed -n '/states:/,$p')
+node_state=$(echo "$states_output" | grep -m 1 "current:" | awk '{print $2}')
+network_target_state=$(echo "$states_output" | grep -m 1 "target:" | awk '{print $2}')
+
+    echo -n "<span style='background-color: green; color: white; padding: 0.2em 0.5em; border-radius: 3px;'>Network >>>></span>"
+
+    echo "<button onclick=\"var blockList = document.getElementById('$network'); if (blockList.style.display === 'none') { blockList.style.display = 'block'; this.innerHTML = '$network'; } else { blockList.style.display = 'none'; this.innerHTML = '$network'; }\">$network</button>"
+    echo "    <div id=\"$network\" style=\"display:none\">"
+    echo "    Our Node Address     : $node_address"
+    echo -n "    Our Node State       :"
+
+    if [[ "$node_state" == "NET_STATE_OFFLINE " ]]; then
+        echo "<span style='background-color: red; color: white; padding: 0.2em 0.5em; border-radius: 3px;'>OFFLINE</span>"
+    else
+        echo "<span> $node_state</span>"
+    fi
+    echo "    Network State        : $network_target_state"
+    echo "    Sync Percentage      : $node_percent %"
+
+    # Check certificate status
+    if /opt/cellframe-node/bin/cellframe-node-cli srv_stake list keys -net "$network" -cert "$cert_name" | grep -q "Active: false"; then
+        echo "<span style='background-color: red; color: white; padding: 0.2em 0.5em; border-radius: 3px;'> Certificate not active!</span>"
+        log_error "Certificate not active for $network!"
+    fi
+
+    # Certificate and rewards
+    block_list=$(/opt/cellframe-node/bin/cellframe-node-cli block list signed -net "$network" -chain main -cert "$cert_name")
+    cert_status=$(/opt/cellframe-node/bin/cellframe-node-cli srv_stake list keys -net "$network" -cert "$cert_name")
+    hashes=$(/opt/cellframe-node/bin/cellframe-node-cli block list signed -net "$network" -chain main -cert "$cert_name" -unspent | grep -oP '(?<=hash: )0x[a-fA-F0-9]{64}')
+    thashes=$(/opt/cellframe-node/bin/cellframe-node-cli block list signed -net "$network" -chain main -cert "$cert_name" -unspent | grep .main  | grep -oP '(?<=have blocks: )\d+')
+
+
+autostatuss=$(/opt/cellframe-node/bin/cellframe-node-cli block autocollect status -net "$network" -chain main | grep "Autocollect status:" | sed 's/^[ \t]*//' )
+    autostatussx=$(/opt/cellframe-node/bin/cellframe-node-cli block autocollect status -net "$network"  -chain main | grep "Rewards status: Total prepared value" | sed 's/, where profit.*//' | sed 's/^[ \t]*//')
+
+    b_reward=$(/opt/cellframe-node/bin/cellframe-node-cli block reward -net "$network" -chain main show | sed 's/^[ \t]*//')
+    last_date=$(/opt/cellframe-node/bin/cellframe-node-cli tx_history -addr "$fee_addr"  | grep -B 16 "reward collecting"  | grep tx_created | head -n 1 | sed 's/^[ \t]*//' | sed 's/^tx_created: //')
+    stake_info=$(/opt/cellframe-node/bin/cellframe-node-cli srv_stake list keys -net "$network" -cert "$cert_name")
+    initial_investment=$(echo "$stake_info" | grep "Stake value" | awk '{print $3}')
+    history=$(/opt/cellframe-node/bin/cellframe-node-cli tx_history -net -addr "$fee_addr")
+    total_rewards=$(echo "$history" | grep -A 22 "status: ACCEPTED" | grep -B 4 "source_address: reward collecting" | grep recv_coins | cut -d ":" -f 2 | awk '{ sum += $1 } END { print sum }')
+
+    stake_value=$(echo "$cert_status" | grep -oP 'Stake value: \K[0-9.]+')
+
+    # Multiply the stake value by 1000
+    stake_value=$(echo "$stake_value * 1000" | bc)
+
+echo ""
+echo "===== Rewards ====="
+echo ""
+
+    echo "    $autostatuss"
+    echo "    $autostatussx"
+    #echo "    $b_reward"
+echo ""
+    output_timestamp=$(date -d "$output_date" +"%s")
+    current_timestamp=$(date +"%s")
+    time_difference=$((current_timestamp - output_timestamp))
+    days_passed=$((time_difference / 86400))
+    yearly_e_gain=$(echo "scale=5; $total_rewards / $days_passed *365" | bc)
+    apy=$(echo "scale=5; ($yearly_e_gain / $initial_investment) * 100 / 1000" | bc)
+
+    dates=()
+    for i in {0..30}; do
+        dates+=("$(date --date="$i days ago" '+%a, %d %b %Y')")
+    done
+
+    calculate_daily_rewards() {
+        local history="$1"
+        local total_rewards=0
+        local days_counted=0
+echo "<button onclick=\"var blockList = document.getElementById('$cert-$network-list-a'); if (blockList.style.display === 'none') { blockList.style.display = 'block'; this.innerHTML = 'Daily Rewards'; } else { blockList.style.display = 'none'; this.innerHTML = 'Daily Rewards'; }\">Daily Rewards</button>"
+    echo "<div id=\"$cert-$network-list-a\" style=\"display:none\">"
+
+        for day in "${dates[@]}"; do
+            daily_reward=$(echo "$history" | grep -A 35 "status: ACCEPTED" | grep -A 18 "$day" | grep -B 4 "source_address: reward collecting" | grep recv_coins | cut -d ":" -f 2 | awk '{ sum += $1 } END { print sum }')
+
+            if [[ -z "$daily_reward" || ! "$daily_reward" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+                daily_reward=0
+            fi
+
+            daily_reward=${daily_reward:-0}
+
+            echo "$day: $daily_reward"
+            total_rewards=$(echo "$total_rewards + $daily_reward" | bc -l)
+            days_counted=$((days_counted + 1))
+        done
+
+
+        if [[ $days_counted -gt 0 ]]; then
+            average=$(printf "%.2f" $(echo "$total_rewards / $days_counted" | bc -l))
+            yearly_estimate=$(echo "$average * 365" | bc -l)
+            echo ""
+            echo "$days_counted days average($average /Day)"
+        else
+            echo "No rewards were counted."
+        fi
+    echo "</div>"
+
+    }
+
+    calculate_daily_rewards "$history"
+    if [ "$stake_value" != "0" ]; then
+        est_apy=$(echo "scale=2; $yearly_estimate / $stake_value * 100" | bc)
+    else
+        est_apy="undefined (stake value is zero)"
+    fi
+    echo "Estimated apy % $est_apy"
+
+   echo ""
+    echo "=== Certificate ==="
+    echo "Delegated $cert_status" | grep "Related weight" | sed 's/^[[:space:]]*//'
+    echo "Delegated value $stake_value"
+
+    echo ""
+    echo "Last Signed Block date $last_date"
+
+#    if $(/opt/cellframe-node/bin/cellframe-node-cli block list signed -net "$network" -chain main -cert "$cert_name" | grep -q "Have 0 blocks"); then
+     if /opt/cellframe-node/bin/cellframe-node-cli block list signed -net "$network" -chain main -cert "$cert_name" | grep -q "Have 0 blocks"; then
+
+        echo "0 blocks available to collect"
+    else
+#        echo "/opt/cellframe-node/bin/cellframe-node-cli block list signed -net "$network" -chain main -cert "$cert_name" | grep -q \"Have 0 blocks\""
+        echo ""
+    sblock=$(/opt/cellframe-node/bin/cellframe-node-cli block list signed -net  "$network"  -chain main -cert  "$cert_name" | grep .main | grep -oP '(?<=have blocks: )\d+'
+)
+
+        echo "Signed blocks : $sblock"
+
+        echo ""
+    fi
+
+    echo "<button onclick=\"var blockList = document.getElementById('$cert-$network-list'); if (blockList.style.display === 'none') { blockList.style.display = 'block'; this.innerHTML = 'Unclaimed Block Rewards $thashes'; } else { blockList.style.display = 'none'; this.innerHTML = 'Unclaimed Block Rewards $thashes'; }\">Unclaimed Block Rewards $thashes</button>"
+    echo "<div id=\"$cert-$network-list\" style=\"display:none\">"
+    for hash in ${hashes[@]}; do
+        echo "<button onclick=\"var blockList = document.getElementById('$hash'); if (blockList.style.display === 'none') { blockList.style.display = 'block'; this.innerHTML = 'Collected'; } else { blockList.style.display = 'none'; this.innerHTML = '$hash'; }\">$hash</button>"
+        echo "<div id=\"$hash\" style=\"display:none\">"
+        echo "/opt/cellframe-node/bin/cellframe-node-cli block reward collect -cert $cert_name -addr $fee_addr -net $network -chain main -hashes $hash -fee 0.01e+18"
+        /opt/cellframe-node/bin/cellframe-node-cli block reward collect -cert $cert_name -addr $fee_addr -net $network -chain main -hashes $hash -fee 0.01e+18
+        echo "</div>"
+    done
+    echo "</div>"
+    echo "</div>"
+done <<< "$networks"
+
+echo "</pre>"
+echo "</body>"
+echo "</html>"
+EOF
+
