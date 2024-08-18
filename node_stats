@@ -1,5 +1,5 @@
 #!/bin/bash
-# Nodestats 1.302
+# Nodestats 1.304
 # Telegram   : @Nocdem
 # Description: This script generates an HTML page displaying various information about the status of a Cellframe node.
 #              It includes details about version, CPU and memory utilization, network, certificates, and wallet information.
@@ -258,6 +258,8 @@ echo "<button onclick=\"var blockList = document.getElementById('$cert-$network-
             days_counted=$((days_counted + 1))
         done
 
+    echo "</div>"
+
 
         if [[ $days_counted -gt 0 ]]; then
             average=$(printf "%.2f" $(echo "$total_rewards / $days_counted" | bc -l))
@@ -267,7 +269,6 @@ echo "<button onclick=\"var blockList = document.getElementById('$cert-$network-
         else
             echo "No rewards were counted."
         fi
-    echo "</div>"
 
     }
 
