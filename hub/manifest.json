@@ -1,8 +1,0 @@
-{
-   "name": "hub",
-   "version": "1.0",
-   "author": "nocdem",
-   "dependencies": [],
-   "description": "Generates raw data for the hub",
-   "type": "python"
-}
