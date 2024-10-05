@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timedelta
 import socket
 import psutil
+from CellFrame.Chain import GlobalDB
+
 
 # Cached Data Storage
 cached_data = {
@@ -367,15 +369,7 @@ def generateFinalOutput():
 # Write data to GDB
 def write_to_gdb(group_name, key, value):
     try:
-        result = subprocess.run(
-            [CLI, "global_db", "write", "-group", group_name, "-key", key, "-value", str(value)],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode == 0:
-            print(f"Successfully wrote {key}: {value} to {group_name}")
-        else:
-            print(f"Error writing {key}: {value} to {group_name}: {result.stderr}")
+        GlobalDB.set(key, group_name, value.encode("utf-8"))
     except Exception as e:
         print(f"Error: {str(e)}")
 
