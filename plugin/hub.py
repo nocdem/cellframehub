@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timedelta
 import socket
 import psutil
+from DAP.Core import logIT
 
 # Cached Data Storage
 cached_data = {
