@@ -358,7 +358,7 @@ def generateFinalOutput():
 def write_to_gdb(group_name, key, value):
     try:
         result = subprocess.run(
-            [CLI, "gdb", "write", group_name, key, str(value)],
+            [CLI, "global_db", "write", group_name, key, str(value)],
             capture_output=True,
             text=True
         )
