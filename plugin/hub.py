@@ -15,6 +15,16 @@ cached_data = {
 CLI = "/opt/cellframe-node/bin/cellframe-node-cli"  # Path to cellframe-node-cli binary
 
 def init():
+    """
+    Initialization function for the plugin.
+
+    This function is called when the plugin is loaded.
+    It should perform any necessary setup.
+
+    Returns:
+        int: A status code indicating the success of initialization.
+    """
+    logIT.notice('Hub plugin initialized!')  # Log a message for initialization
     run_periodically(30)  # Start the periodic task every 30 minutes
     return 0
 
@@ -28,7 +38,7 @@ def deinit():
     Returns:
         int: A status code indicating the success of deinitialization.
     """
-  
+    logIT.notice('Hub plugin deinitialized!')  # Log a message for deinitialization
     return 0
 
 # Get service uptime
@@ -358,7 +368,7 @@ def generateFinalOutput():
 def write_to_gdb(group_name, key, value):
     try:
         result = subprocess.run(
-            [CLI, "global_db", "write", group_name, key, str(value)],
+            [CLI, "global_db", "write", "-group", group_name, "-key", key, "-value", str(value)],
             capture_output=True,
             text=True
         )
