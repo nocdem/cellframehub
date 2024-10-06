@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import socket
 import psutil
 from CellFrame.Chain import GlobalDB
+import threading
 
 
 # Cached Data Storage
@@ -27,7 +28,8 @@ def init():
         int: A status code indicating the success of initialization.
     """
     logIT.notice('Hub plugin initialized!')  # Log a message for initialization
-    run_periodically(30)  # Start the periodic task every 30 minutes
+    t = threading.Thread(target=run_periodically, args=(30,))  # Start the periodic task every 30 minutes
+    t.start()
     return 0
 
 def deinit():
