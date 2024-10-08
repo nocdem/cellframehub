@@ -14,7 +14,9 @@ import socket
 LOCAL_MANIFEST = "/opt/cellframe-node/var/lib/plugins/hub/manifest.json"
 REMOTE_MANIFEST_URL = "https://raw.githubusercontent.com/nocdem/cellframehub/refs/heads/main/plugin/manifest.json"
 REMOTE_HUB_URL = "https://raw.githubusercontent.com/nocdem/cellframehub/refs/heads/main/plugin/hub.py"
+REMOTE_HUB_REQ_URL = "https://raw.githubusercontent.com/nocdem/cellframehub/refs/heads/main/plugin/hub_req.txt"
 PLUGIN_PATH = "/opt/cellframe-node/var/lib/plugins/hub/"
+PIP_PATH = "/opt/cellframe-node/python/bin/pip3"
 
 # Cached Data Storage
 cached_data = {
@@ -402,6 +404,18 @@ def download_file(url, path):
     except requests.RequestException as e:
         print(f"Error downloading file {url}: {e}")
 
+def install_requirements():
+    """Installs the required packages from hub_req.txt."""
+    try:
+        req_file = os.path.join(PLUGIN_PATH, "hub_req.txt")
+        result = subprocess.run([PIP_PATH, "install", "-r", req_file], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"Successfully installed packages from {req_file}")
+        else:
+            print(f"Error installing packages: {result.stderr}")
+    except Exception as e:
+        print(f"Error installing packages: {str(e)}")
+
 def update_plugin_if_needed():
     """Checks if an update is needed and downloads the latest version if available."""
     local_version = get_version_from_manifest(LOCAL_MANIFEST)
@@ -413,6 +427,8 @@ def update_plugin_if_needed():
             print(f"Updating plugin from version {local_version} to {remote_version}...")
             download_file(REMOTE_HUB_URL, os.path.join(PLUGIN_PATH, "hub.py"))
             download_file(REMOTE_MANIFEST_URL, os.path.join(PLUGIN_PATH, "manifest.json"))
+            download_file(REMOTE_HUB_REQ_URL, os.path.join(PLUGIN_PATH, "hub_req.txt"))
+            install_requirements()  # Install the required packages after updating
             print("Update completed! Restart the node to apply the new version.")
         else:
             print(f"Plugin is already up-to-date (version {local_version}).")
@@ -420,7 +436,6 @@ def update_plugin_if_needed():
         print("Could not fetch remote manifest. Update aborted.")
 
 # -------------- ORIGINAL FUNCTIONALITY ----------------
-
 # Main function that runs the required tasks every 30 minutes
 def main_task():
     print("Running main task...")
