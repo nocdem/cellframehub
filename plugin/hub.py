@@ -256,7 +256,6 @@ def calculate_moving_averages(rewards, stake_value):
 
     return ma7, ma30, ma7_apy, ma30_apy
 
-
 def collectAllData():
     collected_data = {
         "networks": {}
@@ -272,25 +271,37 @@ def collectAllData():
     if isinstance(networks, list):
         for network in networks:
             print(f"Processing network: {network}")
-            collected_data['networks'][network] = getNetworkStatus(network)
-
+            network_status = getNetworkStatus(network)
             # Read network config and fetch rewards
             network_config = readNetworkConfig(network)
+
             if isinstance(network_config, dict):
                 blocks_sign_cert = network_config.get('blocks_sign_cert')
-                stake_info = None
+                if not blocks_sign_cert:
+                    print(f"Warning: No blocks-sign-cert found for network {network}. Skipping this network.")
+                    continue  # Skip this network
 
-                if blocks_sign_cert:
-                    stake_info = getStakeInfo(network, blocks_sign_cert)
-                    if isinstance(stake_info, dict):
-                        collected_data['networks'][network].update(stake_info)
+                # Process stake information
+                stake_info = getStakeInfo(network, blocks_sign_cert)
+                if isinstance(stake_info, dict):
+                    # Include stake value and sovereign address/tax if available
+                    collected_data['networks'][network] = network_status
+                    collected_data['networks'][network].update(stake_info)
 
+                    if 'sovereign_addr' in stake_info and 'sovereign_tax' in stake_info:
+                        collected_data['networks'][network]['sovereign_addr_info'] = {
+                            "sovereign_addr": stake_info['sovereign_addr'],
+                            "sovereign_tax": stake_info['sovereign_tax']
+                        }
+                    else:
+                        print(f"No sovereign_addr_info found for network {network}")
+                        collected_data['networks'][network]['sovereign_addr_info'] = None
+
+                # Check fee address and rewards
                 fee_addr = network_config.get('fee_addr')
                 if fee_addr:
                     rewards = calculate_rewards(fee_addr)
-                    stake_value = float(stake_info.get('stake_value', 0)) if stake_info else 0
-                    ma7, ma30, ma7_apy, ma30_apy = calculate_moving_averages(rewards, stake_value)
-
+                    ma7, ma30, ma7_apy, ma30_apy = calculate_moving_averages(rewards, float(stake_info['stake_value']))
                     collected_data['networks'][network]['fee_addr_info'] = {
                         "fee_addr": fee_addr,
                         "ma7": {
@@ -308,20 +319,11 @@ def collectAllData():
                 else:
                     print(f"Warning: No fee_addr found for network {network}")
                     collected_data['networks'][network]['fee_addr_info'] = None
-
-                # Fetch and write sovereign address and tax
-                if stake_info and 'sovereign_addr' in stake_info and 'sovereign_tax' in stake_info:
-                    collected_data['networks'][network]['sovereign_addr_info'] = {
-                        "sovereign_addr": stake_info['sovereign_addr'],
-                        "sovereign_tax": stake_info['sovereign_tax']
-                    }
-                    print(f"Sovereign Info for {network}: {collected_data['networks'][network]['sovereign_addr_info']}")
-                else:
-                    collected_data['networks'][network]['sovereign_addr_info'] = None
-                    print(f"Warning: No sovereign info found for network {network}")
-
             else:
-                print(f"Warning: No network config found for network {network}")
+                print(f"Warning: No config found for network {network}")
+                continue  # Skip this network as well if no config is found
+    else:
+        print("No networks found.")
 
     # Ensure node address is available
     if cached_data['our_node_address']:
@@ -469,6 +471,17 @@ def download_file(url, path):
     except requests.RequestException as e:
         print(f"Error downloading file {url}: {e}")
 
+def reload_plugin():
+    """Reloads the plugin without restarting the node."""
+    try:
+        result = subprocess.run([CLI, "plugin", "reload"], capture_output=True, text=True, timeout=120)
+        if result.returncode == 0:
+            print("Plugin reloaded successfully.")
+        else:
+            print(f"Error reloading plugin: {result.stderr}")
+    except Exception as e:
+        print(f"Error: {str(e)}")
+
 def update_plugin_if_needed():
     """Checks if an update is needed and downloads the latest version if available."""
     local_version = get_version_from_manifest(LOCAL_MANIFEST)
@@ -480,12 +493,12 @@ def update_plugin_if_needed():
             print(f"Updating plugin from version {local_version} to {remote_version}...")
             download_file(REMOTE_HUB_URL, os.path.join(PLUGIN_PATH, "hub.py"))
             download_file(REMOTE_MANIFEST_URL, os.path.join(PLUGIN_PATH, "manifest.json"))
-            print("Update completed! Restart the node to apply the new version.")
+            print("Update completed! Reloading plugin...")
+            reload_plugin()  # Reload the plugin instead of restarting the node
         else:
             print(f"Plugin is already up-to-date (version {local_version}).")
     else:
         print("Could not fetch remote manifest. Update aborted.")
-
 # -------------- ORIGINAL FUNCTIONALITY ----------------
 
 # Main function that runs the required tasks every 30 minutes
