@@ -238,11 +238,25 @@ def calculate_rewards(fee_addr):
         rewards[day] = calculate_rewards_for_day(history, day)
     return rewards
 # Calculate moving averages (MA7 and MA30)
-def calculate_moving_averages(rewards):
-    reward_values = list(rewards.values())
+def calculate_moving_averages(rewards, stake_value):
+    reward_values = list(rewards.values())  # Convert the rewards dictionary to a list of values
+
+    # Calculate MA7 (for the last 7 days)
     ma7 = sum(reward_values[:7]) / 7 if len(reward_values) >= 7 else 0
+
+    # Calculate MA30 (for the last 30 days)
     ma30 = sum(reward_values[:30]) / 30 if len(reward_values) >= 30 else 0
-    return ma7, ma30
+
+    # Deposited amount is the stake value multiplied by 1000
+    deposited_amount = stake_value * 1000
+
+    # Calculate APY based on MA7 and MA30
+    ma7_apy = (ma7 * 365 / deposited_amount) * 100 if deposited_amount > 0 else 0
+    ma30_apy = (ma30 * 365 / deposited_amount) * 100 if deposited_amount > 0 else 0
+
+    return ma7, ma30, ma7_apy, ma30_apy
+
+
 def collectAllData():
     collected_data = {
         "networks": {}
@@ -252,39 +266,63 @@ def collectAllData():
     collected_data['service_uptime'] = getServiceUptime()
     collected_data['node_version'] = getNodeVersion()
     collected_data['timestamp'] = time.strftime("%Y-%m-%d %H:%M:%S")
+
     # Fetch all network data
     networks = getNetworkNames()
     if isinstance(networks, list):
         for network in networks:
             print(f"Processing network: {network}")
             collected_data['networks'][network] = getNetworkStatus(network)
+
             # Read network config and fetch rewards
             network_config = readNetworkConfig(network)
             if isinstance(network_config, dict):
                 blocks_sign_cert = network_config.get('blocks_sign_cert')
+                stake_info = None
+
                 if blocks_sign_cert:
                     stake_info = getStakeInfo(network, blocks_sign_cert)
                     if isinstance(stake_info, dict):
                         collected_data['networks'][network].update(stake_info)
+
                 fee_addr = network_config.get('fee_addr')
                 if fee_addr:
                     rewards = calculate_rewards(fee_addr)
-                    ma7, ma30 = calculate_moving_averages(rewards)
+                    stake_value = float(stake_info.get('stake_value', 0)) if stake_info else 0
+                    ma7, ma30, ma7_apy, ma30_apy = calculate_moving_averages(rewards, stake_value)
+
                     collected_data['networks'][network]['fee_addr_info'] = {
                         "fee_addr": fee_addr,
                         "ma7": {
                             "date": datetime.now().strftime("%a, %d %b %Y"),
-                            "value": ma7
+                            "value": ma7,
+                            "apy": ma7_apy
                         },
                         "ma30": {
                             "date": datetime.now().strftime("%a, %d %b %Y"),
-                            "value": ma30
+                            "value": ma30,
+                            "apy": ma30_apy
                         },
                         "rewards": rewards
                     }
                 else:
-                    print(f"Warning: No fee_addr found for network {network}")  # Debugging statement
+                    print(f"Warning: No fee_addr found for network {network}")
                     collected_data['networks'][network]['fee_addr_info'] = None
+
+                # Fetch and write sovereign address and tax
+                if stake_info and 'sovereign_addr' in stake_info and 'sovereign_tax' in stake_info:
+                    collected_data['networks'][network]['sovereign_addr_info'] = {
+                        "sovereign_addr": stake_info['sovereign_addr'],
+                        "sovereign_tax": stake_info['sovereign_tax']
+                    }
+                    print(f"Sovereign Info for {network}: {collected_data['networks'][network]['sovereign_addr_info']}")
+                else:
+                    collected_data['networks'][network]['sovereign_addr_info'] = None
+                    print(f"Warning: No sovereign info found for network {network}")
+
+            else:
+                print(f"Warning: No network config found for network {network}")
+
     # Ensure node address is available
     if cached_data['our_node_address']:
         print(f"Using node address: {cached_data['our_node_address']}")
@@ -292,8 +330,10 @@ def collectAllData():
     else:
         collected_data['node_addr'] = "Node address not available"
         print("Warning: Node address could not be detected.")
+
     return collected_data
-# Generate the final output to a file
+
+
 def generateFinalOutput():
     collected_data = collectAllData()
     final_data = {
@@ -310,6 +350,7 @@ def generateFinalOutput():
                 "sync_percentage": collected_data['networks'][network].get("sync_percentage"),
                 "block_height": collected_data['networks'][network].get("block_height"),
                 "stake_value": collected_data['networks'][network].get("stake_value"),
+                "sovereign_addr_info": collected_data['networks'][network].get("sovereign_addr_info"),
                 "fee_addr_info": collected_data['networks'][network].get("fee_addr_info")
             } for network in collected_data['networks']
         }
@@ -332,17 +373,23 @@ def write_to_gdb(group_name, key, value):
             print(f"Error writing {key}: {value} to {group_name}: {result.stderr}")
     except Exception as e:
         print(f"Error: {str(e)}")
+
+
 def transform_to_db_structure_and_write():
+    # Read from the output.json file
     with open("/opt/cellframe-node/var/lib/plugins/hub/output.json", "r") as f:
         data = json.load(f)
-    group_name = "hub"
-    node_addr = data['node_addr'].replace("::", "").replace(":", "")
-    # Write basic node information
+
+    group_name = "hub"  # Group name in the global database
+    node_addr = data['node_addr'].replace("::", "").replace(":", "")  # Format node address
+
+    # Write basic node information to GDB
     write_to_gdb(group_name, f"{node_addr}_hostname", data['hostname'])
     write_to_gdb(group_name, f"{node_addr}_service_uptime", data['service_uptime'])
     write_to_gdb(group_name, f"{node_addr}_node_version", data['node_version'])
     write_to_gdb(group_name, f"{node_addr}_timestamp", data['timestamp'])
-    # Write network-related information
+
+    # Write network-related information to GDB
     for network, info in data['network_info'].items():
         write_to_gdb(group_name, f"{node_addr}_{network}_our_node_state", info['our_node_state'])
         write_to_gdb(group_name, f"{node_addr}_{network}_network_state", info['network_state'])
@@ -350,16 +397,36 @@ def transform_to_db_structure_and_write():
         write_to_gdb(group_name, f"{node_addr}_{network}_sync_percentage", info['sync_percentage'])
         write_to_gdb(group_name, f"{node_addr}_{network}_block_height", info['block_height'])
         write_to_gdb(group_name, f"{node_addr}_{network}_stake_value", info['stake_value'])
-        # Write fee_addr_info only if it's not None
-        if info['fee_addr_info']:
-            fee_addr_info = info['fee_addr_info']
+
+        # Write fee_addr_info if present
+        fee_addr_info = info.get('fee_addr_info')
+        if fee_addr_info:
             write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_fee_addr", fee_addr_info['fee_addr'])
             write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_ma7_{fee_addr_info['ma7']['date'].replace(',', '').replace(' ', '_')}", fee_addr_info['ma7']['value'])
+            write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_ma7_apy", fee_addr_info['ma7']['apy'])
             write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_ma30_{fee_addr_info['ma30']['date'].replace(',', '').replace(' ', '_')}", fee_addr_info['ma30']['value'])
-            # Write rewards
-            for reward_date, reward_value in fee_addr_info['rewards'].items():
-                write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_rewards_{reward_date.replace(',', '').replace(' ', '_')}", reward_value)
+            write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_ma30_apy", fee_addr_info['ma30']['apy'])
+
+            # Write only today's and yesterday's rewards
+            rewards = fee_addr_info['rewards']
+            for reward_date, reward_value in rewards.items():
+                # Filter to only today and yesterday's rewards
+                today = datetime.now().strftime("%a, %d %b %Y")
+                yesterday = (datetime.now() - timedelta(days=1)).strftime("%a, %d %b %Y")
+                if reward_date in [today, yesterday]:
+                    reward_key = f"{node_addr}_{network}_fee_addr_info_rewards_{reward_date.replace(',', '').replace(' ', '_')}"
+                    write_to_gdb(group_name, reward_key, reward_value)
+
+        # Write sovereign_addr_info if present
+        sovereign_addr_info = info.get('sovereign_addr_info')
+        if sovereign_addr_info:
+            write_to_gdb(group_name, f"{node_addr}_{network}_sovereign_addr_info_sovereign_addr", sovereign_addr_info['sovereign_addr'])
+            write_to_gdb(group_name, f"{node_addr}_{network}_sovereign_addr_info_sovereign_tax", sovereign_addr_info['sovereign_tax'])
+        else:
+            print(f"No sovereign_addr_info found for network {network}")
+
     print("Data successfully written to GDB.")
+
 
 # -------------- UPDATER FUNCTIONS ----------------
 
