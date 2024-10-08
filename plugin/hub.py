@@ -1,50 +1,34 @@
-import time
 import json
+import os
+import requests
+import threading
+import time
 import subprocess
+import socket
+import psutil
 import re
 from datetime import datetime, timedelta
 import socket
-import psutil
-from CellFrame.Chain import GlobalDB
-import threading
 
+# Paths for the updater
+LOCAL_MANIFEST = "/opt/cellframe-node/var/lib/plugins/hub/manifest.json"
+REMOTE_MANIFEST_URL = "https://raw.githubusercontent.com/nocdem/cellframehub/refs/heads/main/plugin/manifest.json"
+REMOTE_HUB_URL = "https://raw.githubusercontent.com/nocdem/cellframehub/refs/heads/main/plugin/hub.py"
+PLUGIN_PATH = "/opt/cellframe-node/var/lib/plugins/hub/"
 
 # Cached Data Storage
 cached_data = {
     'hostname': socket.gethostname(),
     'our_node_address': None  # Store our node's address here
 }
-
 CLI = "/opt/cellframe-node/bin/cellframe-node-cli"  # Path to cellframe-node-cli binary
-
 def init():
-    """
-    Initialization function for the plugin.
-
-    This function is called when the plugin is loaded.
-    It should perform any necessary setup.
-
-    Returns:
-        int: A status code indicating the success of initialization.
-    """
-    logIT.notice('Hub plugin initialized!')  # Log a message for initialization
     t = threading.Thread(target=run_periodically, args=(30,))  # Start the periodic task every 30 minutes
     t.start()
     return 0
-
 def deinit():
-    """
-    Deinitialization function for the plugin.
-
-    This function is called when the plugin is unloaded.
-    It should perform any necessary cleanup.
-
-    Returns:
-        int: A status code indicating the success of deinitialization.
-    """
-    logIT.notice('Hub plugin deinitialized!')  # Log a message for deinitialization
+    #  deinitialization
     return 0
-
 # Get service uptime
 def getServiceUptime():
     try:
@@ -55,14 +39,12 @@ def getServiceUptime():
         return "cellframe-node process not found"
     except Exception as e:
         return f"Error: {str(e)}"
-
 # Format uptime in days, hours, minutes, and seconds
 def formatUptime(seconds):
     days, remainder = divmod(seconds, 86400)
     hours, remainder = divmod(remainder, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
-
 # Get the node version
 def getNodeVersion():
     try:
@@ -73,7 +55,6 @@ def getNodeVersion():
             return f"Error: {result.stderr}"
     except Exception as e:
         return f"Error: {str(e)}"
-
 # Fetch network names
 def getNetworkNames():
     try:
@@ -97,7 +78,6 @@ def getNetworkNames():
     except Exception as e:
         print(f"Error: {str(e)}")
         return []
-
 # Fetch network status for each network
 def getNetworkStatus(network):
     try:
@@ -113,7 +93,6 @@ def getNetworkStatus(network):
             return f"Error running net get status command for {network}: {result.stderr}"
     except Exception as e:
         return f"Error: {str(e)}"
-
 # Parse network status output
 def parseNetworkStatus(output):
     network_info = {}
@@ -137,7 +116,6 @@ def parseNetworkStatus(output):
     if not cached_data['our_node_address']:
         print("Warning: No node address detected in network status output.")
     return network_info
-
 # Read network config file and return blocks_sign_cert and fee_addr
 def readNetworkConfig(network):
     config_file = f"/opt/cellframe-node/etc/network/{network}.cfg"
@@ -145,7 +123,6 @@ def readNetworkConfig(network):
     try:
         with open(config_file, "r") as file:
             text = file.read()
-
         # Extract blocks-sign-cert
         pattern_cert = r"^blocks-sign-cert=(.+)"
         cert_match = re.search(pattern_cert, text, re.MULTILINE)
@@ -153,7 +130,6 @@ def readNetworkConfig(network):
             net_config['blocks_sign_cert'] = cert_match.group(1).strip()
         else:
             print(f"Warning: blocks-sign-cert not found in {network}.cfg")
-
         # Extract fee_addr
         pattern_fee = r"^fee_addr=(.+)"
         fee_match = re.search(pattern_fee, text, re.MULTILINE)
@@ -162,16 +138,13 @@ def readNetworkConfig(network):
             print(f"Detected fee_addr: {net_config['fee_addr']}")  # Debugging statement
         else:
             print(f"Warning: fee_addr not found in {network}.cfg")
-
         return net_config
-
     except FileNotFoundError:
         print(f"Error: Config file for network {network} not found.")
         return None
     except Exception as e:
         print(f"Error reading {network}.cfg: {str(e)}")
         return None
-
 # Get stake info
 def getStakeInfo(network, blocks_sign_cert):
     if blocks_sign_cert:
@@ -189,7 +162,6 @@ def getStakeInfo(network, blocks_sign_cert):
         except Exception as e:
             return f"Error: {str(e)}"
     return None
-
 # Parse the stake information output
 def parseStakeInfo(output):
     stake_info = {}
@@ -202,12 +174,10 @@ def parseStakeInfo(output):
         elif "Sovereign tax:" in line:
             stake_info['sovereign_tax'] = line.split(":")[1].strip()
     return stake_info
-
 # Fetch rewards for the last 30 days
 def fetch_tx_history(fee_addr):
     result = subprocess.run([CLI, "tx_history", "-addr", fee_addr], capture_output=True, text=True)
     return result.stdout
-
 # Extract block reward transactions
 def get_block_reward_transactions(history):
     reward_transactions = []
@@ -222,7 +192,6 @@ def get_block_reward_transactions(history):
                     break
         i += 1
     return reward_transactions
-
 # Filter transactions by day
 def filter_transactions_by_day(transactions, day):
     daily_transactions = []
@@ -237,7 +206,6 @@ def filter_transactions_by_day(transactions, day):
             except ValueError as e:
                 print(f"Error parsing date: {tx_date_str} - {e}")
     return daily_transactions
-
 # Filter for reward collecting
 def filter_for_reward_collecting(transactions):
     reward_transactions = []
@@ -247,7 +215,6 @@ def filter_for_reward_collecting(transactions):
             if "source_address: reward collecting" in line:
                 reward_transactions.append("\n".join(lines[max(0, i-4):i+4]))
     return reward_transactions
-
 # Extract rewards
 def extract_rewards(transactions):
     total_reward = 0
@@ -256,14 +223,12 @@ def extract_rewards(transactions):
         if match:
             total_reward += float(match.group(1))
     return total_reward
-
 # Calculate rewards for a specific day
 def calculate_rewards_for_day(history, day):
     block_reward_transactions = get_block_reward_transactions(history)
     daily_transactions = filter_transactions_by_day(block_reward_transactions, day)
     reward_transactions = filter_for_reward_collecting(daily_transactions)
     return extract_rewards(reward_transactions)
-
 # Calculate rewards for the last 30 days
 def calculate_rewards(fee_addr):
     history = fetch_tx_history(fee_addr)
@@ -272,33 +237,27 @@ def calculate_rewards(fee_addr):
         day = (datetime.now() - timedelta(days=i)).strftime("%a, %d %b %Y")
         rewards[day] = calculate_rewards_for_day(history, day)
     return rewards
-
 # Calculate moving averages (MA7 and MA30)
 def calculate_moving_averages(rewards):
     reward_values = list(rewards.values())
     ma7 = sum(reward_values[:7]) / 7 if len(reward_values) >= 7 else 0
     ma30 = sum(reward_values[:30]) / 30 if len(reward_values) >= 30 else 0
     return ma7, ma30
-
 def collectAllData():
     collected_data = {
         "networks": {}
     }
-
     # Collect system information
     collected_data['hostname'] = cached_data['hostname']
     collected_data['service_uptime'] = getServiceUptime()
     collected_data['node_version'] = getNodeVersion()
     collected_data['timestamp'] = time.strftime("%Y-%m-%d %H:%M:%S")
-
     # Fetch all network data
     networks = getNetworkNames()
-
     if isinstance(networks, list):
         for network in networks:
             print(f"Processing network: {network}")
             collected_data['networks'][network] = getNetworkStatus(network)
-
             # Read network config and fetch rewards
             network_config = readNetworkConfig(network)
             if isinstance(network_config, dict):
@@ -307,12 +266,10 @@ def collectAllData():
                     stake_info = getStakeInfo(network, blocks_sign_cert)
                     if isinstance(stake_info, dict):
                         collected_data['networks'][network].update(stake_info)
-
                 fee_addr = network_config.get('fee_addr')
                 if fee_addr:
                     rewards = calculate_rewards(fee_addr)
                     ma7, ma30 = calculate_moving_averages(rewards)
-
                     collected_data['networks'][network]['fee_addr_info'] = {
                         "fee_addr": fee_addr,
                         "ma7": {
@@ -328,7 +285,6 @@ def collectAllData():
                 else:
                     print(f"Warning: No fee_addr found for network {network}")  # Debugging statement
                     collected_data['networks'][network]['fee_addr_info'] = None
-
     # Ensure node address is available
     if cached_data['our_node_address']:
         print(f"Using node address: {cached_data['our_node_address']}")
@@ -336,13 +292,10 @@ def collectAllData():
     else:
         collected_data['node_addr'] = "Node address not available"
         print("Warning: Node address could not be detected.")
-
     return collected_data
-
 # Generate the final output to a file
 def generateFinalOutput():
     collected_data = collectAllData()
-
     final_data = {
         "node_addr": collected_data['node_addr'],
         "hostname": collected_data['hostname'],
@@ -361,33 +314,34 @@ def generateFinalOutput():
             } for network in collected_data['networks']
         }
     }
-
     # Write to output.json
     with open("/opt/cellframe-node/var/lib/plugins/hub/output.json", "w") as f:
         json.dump(final_data, f, indent=4)
-
     print("Normal output saved to output.json")
-
 # Write data to GDB
 def write_to_gdb(group_name, key, value):
     try:
-        GlobalDB.set(key, group_name, value.encode("utf-8"))
+        result = subprocess.run(
+            [CLI, "global_db", "write", "-group", group_name, "-key", key, "-value", str(value)],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            print(f"Successfully wrote {key}: {value} to {group_name}")
+        else:
+            print(f"Error writing {key}: {value} to {group_name}: {result.stderr}")
     except Exception as e:
         print(f"Error: {str(e)}")
-
 def transform_to_db_structure_and_write():
     with open("/opt/cellframe-node/var/lib/plugins/hub/output.json", "r") as f:
         data = json.load(f)
-
     group_name = "hub"
     node_addr = data['node_addr'].replace("::", "").replace(":", "")
-
     # Write basic node information
     write_to_gdb(group_name, f"{node_addr}_hostname", data['hostname'])
     write_to_gdb(group_name, f"{node_addr}_service_uptime", data['service_uptime'])
     write_to_gdb(group_name, f"{node_addr}_node_version", data['node_version'])
     write_to_gdb(group_name, f"{node_addr}_timestamp", data['timestamp'])
-
     # Write network-related information
     for network, info in data['network_info'].items():
         write_to_gdb(group_name, f"{node_addr}_{network}_our_node_state", info['our_node_state'])
@@ -396,39 +350,91 @@ def transform_to_db_structure_and_write():
         write_to_gdb(group_name, f"{node_addr}_{network}_sync_percentage", info['sync_percentage'])
         write_to_gdb(group_name, f"{node_addr}_{network}_block_height", info['block_height'])
         write_to_gdb(group_name, f"{node_addr}_{network}_stake_value", info['stake_value'])
-
         # Write fee_addr_info only if it's not None
         if info['fee_addr_info']:
             fee_addr_info = info['fee_addr_info']
             write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_fee_addr", fee_addr_info['fee_addr'])
             write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_ma7_{fee_addr_info['ma7']['date'].replace(',', '').replace(' ', '_')}", fee_addr_info['ma7']['value'])
             write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_ma30_{fee_addr_info['ma30']['date'].replace(',', '').replace(' ', '_')}", fee_addr_info['ma30']['value'])
-
             # Write rewards
             for reward_date, reward_value in fee_addr_info['rewards'].items():
                 write_to_gdb(group_name, f"{node_addr}_{network}_fee_addr_info_rewards_{reward_date.replace(',', '').replace(' ', '_')}", reward_value)
-
     print("Data successfully written to GDB.")
+
+# -------------- UPDATER FUNCTIONS ----------------
+
+def get_version_from_manifest(manifest_path):
+    """Reads the version from a local manifest file."""
+    try:
+        with open(manifest_path, 'r') as f:
+            data = json.load(f)
+            return data.get("version")
+    except FileNotFoundError:
+        print(f"Local manifest file not found: {manifest_path}")
+        return None
+    except json.JSONDecodeError:
+        print(f"Error parsing manifest file: {manifest_path}")
+        return None
+
+def fetch_remote_manifest():
+    """Fetches the manifest.json file from the remote GitHub URL."""
+    try:
+        response = requests.get(REMOTE_MANIFEST_URL)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Failed to fetch remote manifest: {response.status_code}")
+            return None
+    except requests.RequestException as e:
+        print(f"Error fetching remote manifest: {e}")
+        return None
+
+def download_file(url, path):
+    """Downloads a file from a given URL and saves it to the specified path."""
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            with open(path, 'wb') as f:
+                f.write(response.content)
+            print(f"Successfully downloaded {url} to {path}")
+        else:
+            print(f"Failed to download {url}: {response.status_code}")
+    except requests.RequestException as e:
+        print(f"Error downloading file {url}: {e}")
+
+def update_plugin_if_needed():
+    """Checks if an update is needed and downloads the latest version if available."""
+    local_version = get_version_from_manifest(LOCAL_MANIFEST)
+    remote_manifest = fetch_remote_manifest()
+
+    if remote_manifest:
+        remote_version = remote_manifest.get("version")
+        if local_version is None or (remote_version and remote_version > local_version):
+            print(f"Updating plugin from version {local_version} to {remote_version}...")
+            download_file(REMOTE_HUB_URL, os.path.join(PLUGIN_PATH, "hub.py"))
+            download_file(REMOTE_MANIFEST_URL, os.path.join(PLUGIN_PATH, "manifest.json"))
+            print("Update completed! Restart the node to apply the new version.")
+        else:
+            print(f"Plugin is already up-to-date (version {local_version}).")
+    else:
+        print("Could not fetch remote manifest. Update aborted.")
+
+# -------------- ORIGINAL FUNCTIONALITY ----------------
 
 # Main function that runs the required tasks every 30 minutes
 def main_task():
     print("Running main task...")
-
+    update_plugin_if_needed()  # Check for updates
     # Generate the output file
     generateFinalOutput()
-
     # Write to GDB
     transform_to_db_structure_and_write()
-
     print("Task completed. Waiting for the next run...")
-
 # Run the task every 30 minutes
 def run_periodically(interval_in_minutes=30):
     interval_in_seconds = interval_in_minutes * 60
-
     while True:
         main_task()
         time.sleep(interval_in_seconds)
-
 if __name__ == "__main__":
     run_periodically(30)  # Run the task every 30 minutes
