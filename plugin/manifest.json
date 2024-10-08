@@ -1,6 +1,6 @@
 {
    "name": "hub",
-   "version": "1.12",
+   "version": "1.13",
    "author": "nocdem",
    "dependencies": [],
    "description": "Generates raw data for the hub",
