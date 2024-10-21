@@ -39,44 +39,36 @@ cd $PLUGIN_DIR
 /opt/cellframe-node/python/bin/pip3 install -r hub_req.txt
 /opt/cellframe-node/python/bin/python3.10 -m pip install --upgrade pip
 
-#!/bin/bash
+# Function to add or update a configuration under [plugins]
+ensure_config_in_plugins_section() {
+    local config_key="$1"
+    local config_value="$2"
 
-CFG_FILE="/opt/cellframe-node/etc/cellframe-node.cfg"
+    if grep -q "^#.*$config_key" $CFG_FILE; then
+        # Uncomment the line if it exists and is commented
+        sed -i "/^#.*$config_key/c\\$config_key=$config_value" $CFG_FILE
+    elif grep -q "$config_key=" $CFG_FILE; then
+        # Modify the line if it exists
+        sed -i "/$config_key=/c\\$config_key=$config_value" $CFG_FILE
+    else
+        # Append the line right below the [plugins] section
+        sed -i '/\[plugins\]/a\'"$config_key=$config_value" $CFG_FILE
+    fi
+}
 
-# Ensure the [plugins] section exists, and necessary parameters are correctly set
+# Check if the [plugins] section exists
 if grep -q "\[plugins\]" $CFG_FILE; then
     echo "Modifying existing [plugins] section in $CFG_FILE"
 
-    # Ensure 'enabled=true' is present, uncommented if necessary
-    if grep -q "^#.*enabled=" $CFG_FILE; then
-        sed -i '/^#.*enabled=/c\enabled=true' $CFG_FILE  # Uncomment and set to 'true'
-    elif grep -q "enabled=" $CFG_FILE; then
-        sed -i '/enabled=/c\enabled=true' $CFG_FILE  # Ensure it's set to 'true'
-    else
-        # Add 'enabled=true' if it doesn't exist
-        sed -i '/\[plugins\]/a enabled=true' $CFG_FILE
-    fi
+    # Ensure 'enabled=true' is present and correctly set
+    ensure_config_in_plugins_section "enabled" "true"
 
-    # Ensure 'py_load=true' is present, uncommented if necessary
-    if grep -q "^#.*py_load=" $CFG_FILE; then
-        sed -i '/^#.*py_load=/c\py_load=true' $CFG_FILE  # Uncomment and set to 'true'
-    elif grep -q "py_load=" $CFG_FILE; then
-        sed -i '/py_load=/c\py_load=true' $CFG_FILE  # Ensure it's set to 'true'
-    else
-        # Add 'py_load=true' if it doesn't exist
-        sed -i '/\[plugins\]/a py_load=true' $CFG_FILE
-    fi
+    # Ensure 'py_load=true' is present and correctly set
+    ensure_config_in_plugins_section "py_load" "true"
 
-    # Ensure 'py_path=/opt/cellframe-node/var/lib/plugins' is present, uncommented if necessary
-    if grep -q "^#.*py_path=" $CFG_FILE; then
-        sed -i '/^#.*py_path=/c\py_path=/opt/cellframe-node/var/lib/plugins' $CFG_FILE  # Uncomment and correct the path
-    elif grep -q "py_path=" $CFG_FILE; then
-        sed -i '/py_path=/c\py_path=/opt/cellframe-node/var/lib/plugins' $CFG_FILE  # Ensure the correct path is set
-    else
-        # Add 'py_path=/opt/cellframe-node/var/lib/plugins' if it doesn't exist
-        sed -i '/\[plugins\]/a py_path=/opt/cellframe-node/var/lib/plugins' $CFG_FILE
-    fi
-
+    # Ensure 'py_path=/opt/cellframe-node/var/lib/plugins' is present and correctly set
+    ensure_config_in_plugins_section "py_path" "/opt/cellframe-node/var/lib/plugins"
+    
 else
     # Add the [plugins] section and the necessary parameters if the section doesn't exist
     echo "Adding new [plugins] section to $CFG_FILE"
@@ -85,6 +77,13 @@ else
     echo "py_load=true" >> $CFG_FILE
     echo "py_path=/opt/cellframe-node/var/lib/plugins" >> $CFG_FILE
 fi
+
+# Search and remove any duplicate lines in the config file
+echo "Checking for duplicate lines in $CFG_FILE"
+awk '!seen[$0]++' $CFG_FILE > temp_file && mv temp_file $CFG_FILE
+
+echo "Configuration update complete and duplicates removed."
+
 
 # Restart cellframe-node service
 service cellframe-node restart
