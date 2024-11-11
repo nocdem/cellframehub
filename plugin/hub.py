@@ -163,17 +163,27 @@ def getStakeInfo(network, blocks_sign_cert):
             return f"Error: {str(e)}"
     return None
 # Parse the stake information output
+
 def parseStakeInfo(output):
     stake_info = {}
     lines = output.splitlines()
+
+    # Initialize default values to ensure keys are always set
+    stake_info['stake_value'] = "0"
+    stake_info['sovereign_addr'] = "N/A"
+    stake_info['sovereign_tax'] = "0"
+
+    # Iterate through each line and search for the relevant keys
     for line in lines:
-        if "Stake value:" in line:
-            stake_info['stake_value'] = line.split(":")[1].strip()
-        elif "Sovereign addr:" in line:
-            stake_info['sovereign_addr'] = line.split(":")[1].strip()
-        elif "Sovereign tax:" in line:
-            stake_info['sovereign_tax'] = line.split(":")[1].strip()
+        if "stake_value:" in line:
+            stake_info['stake_value'] = line.split(":", 1)[1].strip()
+        elif "sovereign_addr:" in line:
+            stake_info['sovereign_addr'] = line.split(":", 1)[1].strip()
+        elif "sovereign_tax:" in line:
+            stake_info['sovereign_tax'] = line.split(":", 1)[1].strip()
+
     return stake_info
+
 # Fetch rewards for the last 30 days
 def fetch_tx_history(fee_addr):
     result = subprocess.run([CLI, "tx_history", "-addr", fee_addr], capture_output=True, text=True)
@@ -237,9 +247,20 @@ def calculate_rewards(fee_addr):
         day = (datetime.now() - timedelta(days=i)).strftime("%a, %d %b %Y")
         rewards[day] = calculate_rewards_for_day(history, day)
     return rewards
+
 # Calculate moving averages (MA7 and MA30)
-def calculate_moving_averages(rewards, stake_value):
-    reward_values = list(rewards.values())  # Convert the rewards dictionary to a list of values
+def calculate_moving_averages(rewards, stake_value, sovereign_tax):
+    # Convert the sovereign_tax percentage to a decimal
+    sovereign_tax_decimal = float(sovereign_tax) / 100
+
+    # Calculate the multiplier to get 100% of the income
+    total_income_multiplier = 1 / (1 - sovereign_tax_decimal)
+
+    # Adjust rewards to represent 100% of the income
+    adjusted_rewards = {day: value * total_income_multiplier for day, value in rewards.items()}
+
+    # Convert the adjusted rewards to a list of values
+    reward_values = list(adjusted_rewards.values())
 
     # Calculate MA7 (for the last 7 days)
     ma7 = sum(reward_values[:7]) / 7 if len(reward_values) >= 7 else 0
@@ -254,7 +275,8 @@ def calculate_moving_averages(rewards, stake_value):
     ma7_apy = (ma7 * 365 / deposited_amount) * 100 if deposited_amount > 0 else 0
     ma30_apy = (ma30 * 365 / deposited_amount) * 100 if deposited_amount > 0 else 0
 
-    return ma7, ma30, ma7_apy, ma30_apy
+    return ma7, ma30, ma7_apy, ma30_apy, adjusted_rewards
+
 
 def collectAllData():
     collected_data = {
@@ -300,8 +322,13 @@ def collectAllData():
                 # Check fee address and rewards
                 fee_addr = network_config.get('fee_addr')
                 if fee_addr:
+                    # Calculate rewards and adjusted values
                     rewards = calculate_rewards(fee_addr)
-                    ma7, ma30, ma7_apy, ma30_apy = calculate_moving_averages(rewards, float(stake_info['stake_value']))
+                    ma7, ma30, ma7_apy, ma30_apy, adjusted_rewards = calculate_moving_averages(
+                        rewards, float(stake_info['stake_value']), stake_info['sovereign_tax']
+                    )
+
+                    # Write adjusted values to the collected data
                     collected_data['networks'][network]['fee_addr_info'] = {
                         "fee_addr": fee_addr,
                         "ma7": {
@@ -314,7 +341,7 @@ def collectAllData():
                             "value": ma30,
                             "apy": ma30_apy
                         },
-                        "rewards": rewards
+                        "rewards": adjusted_rewards
                     }
                 else:
                     print(f"Warning: No fee_addr found for network {network}")
@@ -375,6 +402,7 @@ def write_to_gdb(group_name, key, value):
             print(f"Error writing {key}: {value} to {group_name}: {result.stderr}")
     except Exception as e:
         print(f"Error: {str(e)}")
+
 
 
 def transform_to_db_structure_and_write():
