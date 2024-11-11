@@ -195,13 +195,20 @@ def get_block_reward_transactions(history):
     i = 0
     while i < len(lines):
         line = lines[i]
-        if "status: ACCEPTED" in line:
-            for j in range(i, i + 35):
-                if j < len(lines) and "service: block_reward" in lines[j]:
-                    reward_transactions.append("\n".join(lines[i:i + 35]))
-                    break
+        if "status: ACCEPTED" in line:  # Check for accepted status
+            transaction_block = []
+            is_reward_transaction = False
+            for j in range(i, i + 35):  # Look within the next 35 lines
+                if j < len(lines):
+                    transaction_block.append(lines[j])
+                    if "source_address: reward collecting" in lines[j]:
+                        is_reward_transaction = True
+            if is_reward_transaction:
+                reward_transactions.append("\n".join(transaction_block))
         i += 1
     return reward_transactions
+
+
 # Filter transactions by day
 def filter_transactions_by_day(transactions, day):
     daily_transactions = []
@@ -231,8 +238,11 @@ def extract_rewards(transactions):
     for transaction in transactions:
         match = re.search(r'recv_coins:\s*([\d.]+)', transaction)
         if match:
-            total_reward += float(match.group(1))
+            reward_value = float(match.group(1))
+            total_reward += reward_value
     return total_reward
+
+
 # Calculate rewards for a specific day
 def calculate_rewards_for_day(history, day):
     block_reward_transactions = get_block_reward_transactions(history)
